@@ -1,4 +1,4 @@
-package syncclusterrolebinding
+package syncrolebinding
 
 import (
 	"context"
@@ -19,13 +19,14 @@ var (
 	scheme = runtime.NewScheme()
 )
 
-func newTestReconciler(clustersetToClusters *helpers.ClusterSetMapper, clustersetAdminToSubject, clustersetViewToSubject *helpers.ClustersetSubjectsMapper) *Reconciler {
-	cb := generateRequiredClusterRoleBinding("c0", nil, "admin")
+func newTestReconciler(clustersetToClusters, clustersetToObjects *helpers.ClusterSetMapper, clustersetAdminToSubject, clustersetViewToSubject *helpers.ClustersetSubjectsMapper) *Reconciler {
+	cb := generateRequiredRoleBinding("c0", nil, "admin")
 	objs := []runtime.Object{cb}
 	r := &Reconciler{
 		client:                   fake.NewFakeClient(objs...),
 		scheme:                   scheme,
 		clustersetToClusters:     clustersetToClusters,
+		clustersetToObjects:      clustersetToObjects,
 		clustersetAdminToSubject: clustersetAdminToSubject,
 		clustersetViewToSubject:  clustersetViewToSubject,
 	}
@@ -58,95 +59,71 @@ func TestReconcile(t *testing.T) {
 
 	tests := []struct {
 		name                     string
+		clustersetToObjects      *helpers.ClusterSetMapper
 		clustersetToClusters     *helpers.ClusterSetMapper
 		clustersetAdminToSubject *helpers.ClustersetSubjectsMapper
 		clustersetViewToSubject  *helpers.ClustersetSubjectsMapper
 		req                      reconcile.Request
-		clusterrolebindingName   string
+		rolebindingName          string
 		exist                    bool
 	}{
 		{
 			name:                     "init:",
 			clustersetToClusters:     ctc1,
+			clustersetToObjects:      ctc1,
 			clustersetAdminToSubject: cts1,
 			clustersetViewToSubject:  cts1,
 			req: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "clusterRole1",
+					Name: "role1",
 				},
 			},
-			clusterrolebindingName: utils.GenerateClustersetClusterRoleBindingName("c1", "admin"),
-			exist:                  false,
+			rolebindingName: utils.GenerateClustersetResourceRoleBindingName("admin"),
+			exist:           false,
 		},
 		{
 			name:                     "delete c0:",
 			clustersetToClusters:     ctc1,
+			clustersetToObjects:      ctc2,
 			clustersetAdminToSubject: cts1,
 			clustersetViewToSubject:  cts1,
 			req: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "clusterRole1",
+					Name: "role1",
 				},
 			},
-			clusterrolebindingName: utils.GenerateClustersetClusterRoleBindingName("c0", "admin"),
-			exist:                  false,
+			rolebindingName: utils.GenerateClustersetResourceRoleBindingName("admin"),
+			exist:           false,
 		},
 		{
 			name:                     "need create:",
 			clustersetToClusters:     ctc2,
+			clustersetToObjects:      ctc2,
 			clustersetAdminToSubject: cts2,
 			clustersetViewToSubject:  cts2,
 			req: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "clusterRole2",
+					Name: "role2",
 				},
 			},
-			clusterrolebindingName: utils.GenerateClustersetClusterRoleBindingName("c1", "admin"),
-			exist:                  true,
+			rolebindingName: utils.GenerateClustersetResourceRoleBindingName("admin"),
+			exist:           true,
 		},
 	}
 
 	for _, test := range tests {
-		r := newTestReconciler(test.clustersetToClusters, test.clustersetAdminToSubject, test.clustersetViewToSubject)
+		r := newTestReconciler(test.clustersetToClusters, test.clustersetToObjects, test.clustersetAdminToSubject, test.clustersetViewToSubject)
 		r.Reconcile(test.req)
-		validateResult(t, r, test.clusterrolebindingName, test.exist)
+		validateResult(t, r, test.rolebindingName, test.exist)
 	}
 }
 
-func validateResult(t *testing.T, r *Reconciler, clusterrolebindingName string, exist bool) {
+func validateResult(t *testing.T, r *Reconciler, rolebindingName string, exist bool) {
 	ctx := context.Background()
-	clusterrolebinding := &rbacv1.ClusterRoleBinding{}
-	r.client.Get(ctx, types.NamespacedName{Name: clusterrolebindingName}, clusterrolebinding)
-	if exist && clusterrolebinding == nil {
-		t.Errorf("Failed to apply clusterrolebinding")
-	}
-}
-
-func Test_getClusterNameInClusterrolebinding(t *testing.T) {
-	type args struct {
-		clusterrolebindingName string
-		role                   string
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			"case1",
-			args{
-				clusterrolebindingName: "open-cluster-management:managedclusterset:admin:managedcluster:managedcluster1",
-				role:                   "admin",
-			},
-			"managedcluster1",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := getClusterNameInClusterrolebinding(tt.args.clusterrolebindingName, tt.args.role); got != tt.want {
-				t.Errorf("getClusterNameInClusterrolebinding() = %v, want %v", got, tt.want)
-			}
-		})
+	rolebinding := &rbacv1.RoleBinding{}
+	r.client.Get(ctx, types.NamespacedName{Name: rolebindingName}, rolebinding)
+	if exist && rolebinding == nil {
+		t.Errorf("Failed to apply rolebinding")
 	}
 }
 
@@ -228,7 +205,7 @@ func Test_generateClusterSubjectMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := generateClusterSubjectMap(tt.args.clustersetToClusters, tt.args.clustersetToSubject); !reflect.DeepEqual(got, tt.want) {
+			if got := generateNamespaceSubjectMap(tt.args.clustersetToClusters, tt.args.clustersetToSubject); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("generateClusterSubjectMap() = %v, want %v", got, tt.want)
 			}
 		})

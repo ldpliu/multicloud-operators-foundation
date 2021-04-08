@@ -27,28 +27,33 @@ const (
 //This Controller will generate a Clusterset to Subjects map, and this map will be used to sync
 // clusterset related clusterrolebinding.
 type Reconciler struct {
-	client                  client.Client
-	scheme                  *runtime.Scheme
-	clusterroleToClusterset map[string]sets.String
-	clustersetToSubject     *helpers.ClustersetSubjectsMapper
+	client                       client.Client
+	scheme                       *runtime.Scheme
+	clusterroleToClustersetAdmin map[string]sets.String
+	clustersetAdminToSubject     *helpers.ClustersetSubjectsMapper
+	clusterroleToClustersetView  map[string]sets.String
+	clustersetViewToSubject      *helpers.ClustersetSubjectsMapper
 }
 
-func SetupWithManager(mgr manager.Manager, clustersetToSubject *helpers.ClustersetSubjectsMapper) error {
-	if err := add(mgr, newReconciler(mgr, clustersetToSubject)); err != nil {
-		klog.Errorf("Failed to create clustersetToSubject controller, %v", err)
+func SetupWithManager(mgr manager.Manager, clustersetAdminToSubject *helpers.ClustersetSubjectsMapper, clustersetViewToSubject *helpers.ClustersetSubjectsMapper) error {
+	if err := add(mgr, newReconciler(mgr, clustersetAdminToSubject, clustersetViewToSubject)); err != nil {
+		klog.Errorf("Failed to create clustersetAdminToSubject controller, %v", err)
 		return err
 	}
 	return nil
 }
 
 // newReconciler returns a new reconcile.Reconciler
-func newReconciler(mgr manager.Manager, clustersetToSubject *helpers.ClustersetSubjectsMapper) reconcile.Reconciler {
-	var clusterroleToClusterset = make(map[string]sets.String)
+func newReconciler(mgr manager.Manager, clustersetAdminToSubject *helpers.ClustersetSubjectsMapper, clustersetViewToSubject *helpers.ClustersetSubjectsMapper) reconcile.Reconciler {
+	var clusterroleToClustersetAdmin = make(map[string]sets.String)
+	var clusterroleToClustersetView = make(map[string]sets.String)
 	return &Reconciler{
-		client:                  mgr.GetClient(),
-		scheme:                  mgr.GetScheme(),
-		clustersetToSubject:     clustersetToSubject,
-		clusterroleToClusterset: clusterroleToClusterset,
+		client:                       mgr.GetClient(),
+		scheme:                       mgr.GetScheme(),
+		clustersetAdminToSubject:     clustersetAdminToSubject,
+		clustersetViewToSubject:      clustersetViewToSubject,
+		clusterroleToClustersetAdmin: clusterroleToClustersetAdmin,
+		clusterroleToClustersetView:  clusterroleToClustersetView,
 	}
 }
 
@@ -92,14 +97,19 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 func (r *Reconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	clusterrole := &rbacv1.ClusterRole{}
+	isAdmin := false
+	isView := false
 	err := r.client.Get(ctx, req.NamespacedName, clusterrole)
 	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	//generate clusterrole's all clustersets
-	clustersetsInRule := utils.GetClustersetInRules(clusterrole.Rules)
+	//generate clusterrole's all clustersets Admin
+	clustersetAdminInRule := utils.GetClustersetAdminInRules(clusterrole.Rules)
+	//generate clusterrole's all clustersets view
+	clustersetViewInRule := utils.GetClustersetViewInRules(clusterrole.Rules)
+
 	//Add Finalizer to clusterset related clusterrole
-	if clustersetsInRule.Len() != 0 && !utils.ContainsString(clusterrole.GetFinalizers(), ClustersetFinalizerName) {
+	if (clustersetAdminInRule.Len() != 0 || clustersetViewInRule.Len() != 0) && !utils.ContainsString(clusterrole.GetFinalizers(), ClustersetFinalizerName) {
 		klog.Infof("adding ClusterRoleBinding Finalizer to ClusterRole %v", clusterrole.Name)
 		clusterrole.ObjectMeta.Finalizers = append(clusterrole.ObjectMeta.Finalizers, ClustersetFinalizerName)
 		if err := r.client.Update(context.TODO(), clusterrole); err != nil {
@@ -107,8 +117,9 @@ func (r *Reconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return reconcile.Result{}, err
 		}
 	}
+
 	//clusterrole is deleted or clusterrole is not related to any clusterset
-	if clustersetsInRule.Len() == 0 || !clusterrole.GetDeletionTimestamp().IsZero() {
+	if (clustersetAdminInRule.Len() == 0 && clustersetViewInRule.Len() == 0) || !clusterrole.GetDeletionTimestamp().IsZero() {
 		// The object is being deleted
 		if utils.ContainsString(clusterrole.GetFinalizers(), ClustersetFinalizerName) {
 			klog.Infof("removing ClusterRoleBinding Finalizer in ClusterRole %v", clusterrole.Name)
@@ -118,19 +129,43 @@ func (r *Reconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 				return reconcile.Result{}, err
 			}
 		}
-		if _, ok := r.clusterroleToClusterset[clusterrole.Name]; !ok {
+		if _, ok := r.clusterroleToClustersetAdmin[clusterrole.Name]; ok {
+			isAdmin = true
+			delete(r.clusterroleToClustersetAdmin, clusterrole.Name)
+		}
+
+		if _, ok := r.clusterroleToClustersetView[clusterrole.Name]; ok {
+			isView = true
+			delete(r.clusterroleToClustersetView, clusterrole.Name)
+		}
+		if !isAdmin && !isView {
 			return ctrl.Result{}, nil
 		}
-		delete(r.clusterroleToClusterset, clusterrole.Name)
-	} else {
-		r.clusterroleToClusterset[clusterrole.Name] = clustersetsInRule
+
 	}
-	curClustersetToRoles := generateClustersetToClusterroles(r.clusterroleToClusterset)
+	if clustersetAdminInRule.Len() != 0 {
+		r.clusterroleToClustersetAdmin[clusterrole.Name] = clustersetAdminInRule
+		clustersetAdminToSubjects := syncRoleClustersetSubjects(ctx, r.client, r.clusterroleToClustersetAdmin)
+		r.clustersetAdminToSubject.SetMap(clustersetAdminToSubjects)
+	}
+
+	if clustersetViewInRule.Len() != 0 {
+		r.clusterroleToClustersetView[clusterrole.Name] = clustersetViewInRule
+		clustersetViewToSubjects := syncRoleClustersetSubjects(ctx, r.client, r.clusterroleToClustersetView)
+		r.clustersetViewToSubject.SetMap(clustersetViewToSubjects)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// syncRoleClustersetSubjects generate clusterset to subjects map
+func syncRoleClustersetSubjects(ctx context.Context, client client.Client, clusterroleToClusterset map[string]sets.String) map[string][]rbacv1.Subject {
+	curClustersetToRoles := generateClustersetToClusterroles(clusterroleToClusterset)
 	var clustersetToSubjects = make(map[string][]rbacv1.Subject)
 	for curClusterset, curClusterRoles := range curClustersetToRoles {
 		var clustersetSubjects []rbacv1.Subject
 		for _, curClusterRole := range curClusterRoles {
-			subjects, err := r.getClusterroleSubject(ctx, curClusterRole)
+			subjects, err := getClusterroleSubject(ctx, client, curClusterRole)
 			if err != nil {
 				klog.Errorf("Failed to get clusterrole subject. clusterrole: %v, error:%v", curClusterRole, err)
 				continue
@@ -139,14 +174,14 @@ func (r *Reconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 		clustersetToSubjects[curClusterset] = clustersetSubjects
 	}
-	r.clustersetToSubject.SetMap(clustersetToSubjects)
-	return ctrl.Result{}, nil
+	return clustersetToSubjects
 }
 
-func (r *Reconciler) getClusterroleSubject(ctx context.Context, clusterroleName string) ([]rbacv1.Subject, error) {
+// getClusterroleSubject generate all subject that related to clusterrole
+func getClusterroleSubject(ctx context.Context, client client.Client, clusterroleName string) ([]rbacv1.Subject, error) {
 	var subjects []rbacv1.Subject
 	clusterrolebindinglist := &rbacv1.ClusterRoleBindingList{}
-	err := r.client.List(ctx, clusterrolebindinglist)
+	err := client.List(ctx, clusterrolebindinglist)
 	if err != nil {
 		return nil, err
 	}

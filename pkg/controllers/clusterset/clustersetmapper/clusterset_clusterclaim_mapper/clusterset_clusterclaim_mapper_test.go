@@ -1,10 +1,9 @@
-package clustersetmapper
+package clusterset_clusterclaim_mapper
 
 import (
 	"os"
 	"testing"
 
-	clusterv1 "github.com/open-cluster-management/api/cluster/v1"
 	clusterv1alapha1 "github.com/open-cluster-management/api/cluster/v1alpha1"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/helpers"
 	"github.com/stretchr/testify/assert"
@@ -15,6 +14,8 @@ import (
 	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	hivev1 "github.com/openshift/hive/pkg/apis/hive/v1"
 )
 
 var (
@@ -25,19 +26,18 @@ func TestMain(m *testing.M) {
 	// AddToSchemes may be used to add all resources defined in the project to a Scheme
 	var AddToSchemes runtime.SchemeBuilder
 	// Register the types with the Scheme so the components can map objects to GroupVersionKinds and back
-	AddToSchemes = append(AddToSchemes, clusterv1.Install, clusterv1alapha1.Install)
 
 	if err := AddToSchemes.AddToScheme(scheme); err != nil {
 		klog.Errorf("Failed adding apis to scheme, %v", err)
 		os.Exit(1)
 	}
-
 	if err := clusterv1alapha1.Install(scheme); err != nil {
 		klog.Errorf("Failed adding cluster v1alph1 to scheme, %v", err)
 		os.Exit(1)
 	}
-	if err := clusterv1.Install(scheme); err != nil {
-		klog.Errorf("Failed adding cluster to scheme, %v", err)
+
+	if err := hivev1.AddToScheme(scheme); err != nil {
+		klog.Errorf("Failed adding hive to scheme, %v", err)
 		os.Exit(1)
 	}
 
@@ -54,8 +54,8 @@ func newTestReconciler(managedClusterSetObjs, managedClusterObjs []runtime.Objec
 		clusterSetMapper: helpers.NewClusterSetMapper(),
 	}
 
-	for clusterSet, clusters := range initMapperData {
-		r.clusterSetMapper.UpdateClusterSetByClusters(clusterSet, clusters)
+	for clusterSet, ns := range initMapperData {
+		r.clusterSetMapper.UpdateClusterSetByObjects(clusterSet, ns)
 	}
 
 	return r
@@ -67,14 +67,14 @@ func TestReconcile(t *testing.T) {
 		name               string
 		initMap            map[string]sets.String
 		clusterSetObjs     []runtime.Object
-		clusterObjs        []runtime.Object
+		clusterClaimObjs   []runtime.Object
 		expectedMapperData map[string]sets.String
 		req                reconcile.Request
 	}{
 		{
-			name: "add Cluster",
+			name: "add Clusterclaim",
 			initMap: map[string]sets.String{
-				"clusterSet1": {"cluster2": {}, "cluster3": {}},
+				"clusterSet1": {"ns2": {}, "ns3": {}},
 			},
 			clusterSetObjs: []runtime.Object{
 				&clusterv1alapha1.ManagedClusterSet{
@@ -84,29 +84,33 @@ func TestReconcile(t *testing.T) {
 					Spec: clusterv1alapha1.ManagedClusterSetSpec{},
 				},
 			},
-			clusterObjs: []runtime.Object{
-				&clusterv1.ManagedCluster{
+			clusterClaimObjs: []runtime.Object{
+				&hivev1.ClusterClaim{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster1",
+						Name:      "clusterClaim1",
+						Namespace: "ns1",
 						Labels: map[string]string{
 							ClusterSetLabel: "clusterSet1",
 						},
 					},
-					Spec: clusterv1.ManagedClusterSpec{},
+					Spec: hivev1.ClusterClaimSpec{
+						ClusterPoolName: "pool1",
+					},
 				},
 			},
 			req: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "cluster1",
+					Name:      "clusterClaim1",
+					Namespace: "ns1",
 				},
 			},
 			expectedMapperData: map[string]sets.String{
-				"clusterSet1": {"cluster1": {}, "cluster2": {}, "cluster3": {}}},
+				"clusterSet1": {"ns1": {}, "ns2": {}, "ns3": {}}},
 		},
 		{
-			name: "update Cluster",
+			name: "update Clusterclaim",
 			initMap: map[string]sets.String{
-				"clusterSet1": {"cluster2": {}, "cluster3": {}},
+				"clusterSet1": {"ns1": {}, "ns2": {}},
 			},
 			clusterSetObjs: []runtime.Object{
 				&clusterv1alapha1.ManagedClusterSet{
@@ -116,43 +120,49 @@ func TestReconcile(t *testing.T) {
 					Spec: clusterv1alapha1.ManagedClusterSetSpec{},
 				},
 			},
-			clusterObjs: []runtime.Object{
-				&clusterv1.ManagedCluster{
+			clusterClaimObjs: []runtime.Object{
+				&hivev1.ClusterClaim{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster2",
+						Name:      "clusterClaim1",
+						Namespace: "ns1",
 						Labels: map[string]string{
 							ClusterSetLabel: "clusterSet2",
 						},
 					},
-					Spec: clusterv1.ManagedClusterSpec{},
+					Spec: hivev1.ClusterClaimSpec{
+						ClusterPoolName: "pool1",
+					},
 				},
 			},
 			req: reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "cluster2",
+					Name:      "clusterClaim1",
+					Namespace: "ns1",
 				},
 			},
 			expectedMapperData: map[string]sets.String{
-				"clusterSet1": {"cluster3": {}},
-				"clusterSet2": {"cluster2": {}},
+				"clusterSet1": {"ns2": {}},
+				"clusterSet2": {"ns1": {}},
 			},
 		},
 	}
 
 	for _, test := range tests {
-		r := newTestReconciler(test.clusterSetObjs, test.clusterObjs, test.initMap)
+		r := newTestReconciler(test.clusterSetObjs, test.clusterClaimObjs, test.initMap)
 		r.Reconcile(test.req)
-		validateResult(t, r, test.expectedMapperData)
+		validateResult(t, r, test.name, test.expectedMapperData)
 
 	}
 }
 
-func validateResult(t *testing.T, r *Reconciler, expectedMapperData map[string]sets.String) {
-	mapperData := r.clusterSetMapper.GetAllClusterSetToClusters()
+func validateResult(t *testing.T, r *Reconciler, caseName string, expectedMapperData map[string]sets.String) {
+	mapperData := r.clusterSetMapper.GetAllClusterSetToObjects()
 	if !assert.Equal(t, len(mapperData), len(expectedMapperData)) {
-		t.Errorf("expect:%v  actual:%v", expectedMapperData, mapperData)
+		t.Errorf("case: %v, expect:%v  actual:%v", caseName, expectedMapperData, mapperData)
 	}
 	for clusterSet, clusters := range mapperData {
-		assert.True(t, expectedMapperData[clusterSet].Equal(clusters))
+		if !assert.True(t, expectedMapperData[clusterSet].Equal(clusters)) {
+			t.Errorf("case: %v, expect:%v  actual:%v", caseName, expectedMapperData, mapperData)
+		}
 	}
 }

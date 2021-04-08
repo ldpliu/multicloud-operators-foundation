@@ -1,10 +1,11 @@
-package clustersetmapper
+package clusterset_clusterpool_mapper
 
 import (
 	"context"
 
 	clusterv1alapha1 "github.com/open-cluster-management/api/cluster/v1alpha1"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/helpers"
+	hivev1 "github.com/openshift/hive/pkg/apis/hive/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,7 +19,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	clusterv1 "github.com/open-cluster-management/api/cluster/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -53,27 +53,27 @@ func newReconciler(mgr manager.Manager, clusterSetMapper *helpers.ClusterSetMapp
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	// Create a new controller
-	c, err := controller.New("clustersetmapper-controller", mgr, controller.Options{Reconciler: r})
+	c, err := controller.New("clusterset-clusterpool-mapper-controller", mgr, controller.Options{Reconciler: r})
 	if err != nil {
 		return err
 	}
 
-	if err = c.Watch(&source.Kind{Type: &clusterv1.ManagedCluster{}},
+	if err = c.Watch(&source.Kind{Type: &hivev1.ClusterPool{}},
 		&handler.EnqueueRequestForObject{}); err != nil {
 		return err
 	}
 
-	// put all managedCluster which have this clusterset label into queue if there is the managedClusterset event
+	// put all clusterpool which have this clusterset label into queue if there is the clusterset event
 	err = c.Watch(&source.Kind{Type: &clusterv1alapha1.ManagedClusterSet{}},
 		&handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(obj handler.MapObject) []reconcile.Request {
 				if _, ok := obj.Object.(*clusterv1alapha1.ManagedClusterSet); !ok {
-					// not a managedClusterset, returning empty
-					klog.Error("managedClusterset handler received non-managedClusterset object")
+					// not a clusterset, returning empty
+					klog.Error("clusterset handler received non-clusterset object")
 					return []reconcile.Request{}
 				}
 
-				managedClusters := &clusterv1.ManagedClusterList{}
+				clusterpoolList := &hivev1.ClusterPoolList{}
 
 				//List Clusterset related cluster
 				labelSelector := metav1.LabelSelector{MatchLabels: map[string]string{
@@ -84,21 +84,22 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 					return nil
 				}
 
-				err = mgr.GetClient().List(context.TODO(), managedClusters, &client.ListOptions{LabelSelector: selector})
+				err = mgr.GetClient().List(context.TODO(), clusterpoolList, &client.ListOptions{LabelSelector: selector})
 				if err != nil {
-					klog.Errorf("failed to list managedClusterSet %v", err)
+					klog.Errorf("failed to list clusterpool %v", err)
 				}
 
 				var requests []reconcile.Request
-				for _, managedCluster := range managedClusters.Items {
+				for _, clusterpool := range clusterpoolList.Items {
 					requests = append(requests, reconcile.Request{
 						NamespacedName: types.NamespacedName{
-							Name: managedCluster.Name,
+							Namespace: clusterpool.Namespace,
+							Name:      clusterpool.Name,
 						},
 					})
 				}
 
-				klog.V(5).Infof("List managedCluster %+v", requests)
+				klog.V(5).Infof("List clusterpool %+v", requests)
 				return requests
 			}),
 		})
@@ -110,38 +111,37 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 
 func (r *Reconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-	managedCluster := &clusterv1.ManagedCluster{}
+	clusterpool := &hivev1.ClusterPool{}
 	klog.V(5).Infof("reconcile: %+v", req)
-	err := r.client.Get(ctx, types.NamespacedName{Name: req.Name}, managedCluster)
+	err := r.client.Get(ctx, req.NamespacedName, clusterpool)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// managedCluster has been deleted
-			r.clusterSetMapper.DeleteClusterInClusterSet(req.Name)
+			r.clusterSetMapper.DeleteObjectInClusterSet(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
-	if _, ok := managedCluster.Labels[ClusterSetLabel]; !ok {
-		r.clusterSetMapper.DeleteClusterInClusterSet(req.Name)
+	if _, ok := clusterpool.Labels[ClusterSetLabel]; !ok {
+		r.clusterSetMapper.DeleteObjectInClusterSet(req.Name)
 		return ctrl.Result{}, nil
 	}
 
-	managedClustersetName := managedCluster.Labels[ClusterSetLabel]
+	clustersetName := clusterpool.Labels[ClusterSetLabel]
 
 	//If the managedclusterset do not exist, delete this clusterset in map
-	managedClusterset := &clusterv1alapha1.ManagedClusterSet{}
-	err = r.client.Get(ctx, types.NamespacedName{Name: managedClustersetName}, managedClusterset)
+	clusterset := &clusterv1alapha1.ManagedClusterSet{}
+	err = r.client.Get(ctx, types.NamespacedName{Name: clustersetName}, clusterset)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			r.clusterSetMapper.DeleteClusterSet(managedClustersetName)
+			r.clusterSetMapper.DeleteClusterSet(clustersetName)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	managedClusterName := managedCluster.GetName()
-	r.clusterSetMapper.UpdateClusterInClusterSet(managedClusterName, managedClustersetName)
-
-	klog.V(5).Infof("clusterSetMapper: %+v", r.clusterSetMapper.GetAllClusterSetToClusters())
+	//Only the clusterpool namespace is needed, so add namespace to clusterset map value.
+	//If all the clusterpool needed, we could add clusterdpool.Namespace/clusterpool.Name to map value
+	r.clusterSetMapper.UpdateObjectInClusterSet(clusterpool.Namespace, clustersetName)
+	klog.V(5).Infof("clusterSetMapper: %+v", r.clusterSetMapper.GetAllClusterSetToObjects())
 	return ctrl.Result{}, nil
 }

@@ -68,3 +68,11 @@ func (agg aggregate) visit(f func(err error) bool) bool {
 
 	return false
 }
+
+//appendErrors append err2 to err1, return appended result
+func AppendErrors(err1, err2 []error) []error {
+	for _, err := range err2 {
+		err1 = append(err1, err)
+	}
+	return err1
+}

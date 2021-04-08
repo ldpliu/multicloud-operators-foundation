@@ -18,8 +18,13 @@ import (
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterrole"
 	clustersetrole "github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clusterrole"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clusterrolebinding"
-	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clustersetmapper"
+	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clustersetmapper/clusterset_cluster_mapper"
+	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clustersetmapper/clusterset_clusterclaim_mapper"
+	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clustersetmapper/clusterset_clusterdeployment_mapper"
+	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/clustersetmapper/clusterset_clusterpool_mapper"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/syncclusterrolebinding"
+	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/clusterset/syncrolebinding"
+
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/gc"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/controllers/inventory"
 	"github.com/open-cluster-management/multicloud-operators-foundation/pkg/helpers"
@@ -51,8 +56,12 @@ func init() {
 }
 
 func Run(o *options.ControllerRunOptions, stopCh <-chan struct{}) error {
-	clustersetToSubject := helpers.NewClustersetSubjectsMapper()
-	clusterSetMapper := helpers.NewClusterSetMapper()
+	clustersetAdminToSubject := helpers.NewClustersetSubjectsMapper()
+	clustersetViewToSubject := helpers.NewClustersetSubjectsMapper()
+
+	clusterSetClusterMapper := helpers.NewClusterSetMapper()
+	clusterSetNamespaceMapper := helpers.NewClusterSetMapper()
+
 	kubeConfig, err := clientcmd.BuildConfigFromFlags("", o.KubeConfig)
 	if err != nil {
 		klog.Errorf("unable to get kube config: %v", err)
@@ -114,12 +123,35 @@ func Run(o *options.ControllerRunOptions, stopCh <-chan struct{}) error {
 		return err
 	}
 
-	if err = clusterrolebinding.SetupWithManager(mgr, clustersetToSubject); err != nil {
+	if err = clusterset_clusterdeployment_mapper.SetupWithManager(mgr, clusterSetNamespaceMapper); err != nil {
+		klog.Errorf("unable to setup clustersetmapper reconciler: %v", err)
+		return err
+	}
+	if err = clusterset_clusterclaim_mapper.SetupWithManager(mgr, clusterSetNamespaceMapper); err != nil {
+		klog.Errorf("unable to setup clustersetmapper reconciler: %v", err)
+		return err
+	}
+	if err = clusterset_clusterpool_mapper.SetupWithManager(mgr, clusterSetNamespaceMapper); err != nil {
+		klog.Errorf("unable to setup clustersetmapper reconciler: %v", err)
+		return err
+	}
+
+	if err = clusterset_cluster_mapper.SetupWithManager(mgr, clusterSetClusterMapper); err != nil {
+		klog.Errorf("unable to setup clustersetmapper reconciler: %v", err)
+		return err
+	}
+
+	if err = clusterrolebinding.SetupWithManager(mgr, clustersetAdminToSubject, clustersetViewToSubject); err != nil {
 		klog.Errorf("unable to setup clusterrolebinding reconciler: %v", err)
 		return err
 	}
 
-	if err = syncclusterrolebinding.SetupWithManager(mgr, clustersetToSubject, clusterSetMapper); err != nil {
+	if err = syncclusterrolebinding.SetupWithManager(mgr, clustersetAdminToSubject, clustersetViewToSubject, clusterSetClusterMapper); err != nil {
+		klog.Errorf("unable to setup clusterrolebinding reconciler: %v", err)
+		return err
+	}
+
+	if err = syncrolebinding.SetupWithManager(mgr, clustersetAdminToSubject, clustersetViewToSubject, clusterSetNamespaceMapper, clusterSetClusterMapper); err != nil {
 		klog.Errorf("unable to setup clusterrolebinding reconciler: %v", err)
 		return err
 	}
@@ -142,11 +174,6 @@ func Run(o *options.ControllerRunOptions, stopCh <-chan struct{}) error {
 
 	if err = gc.SetupWithManager(mgr); err != nil {
 		klog.Errorf("unable to setup gc reconciler: %v", err)
-		return err
-	}
-
-	if err = clustersetmapper.SetupWithManager(mgr, clusterSetMapper); err != nil {
-		klog.Errorf("unable to setup clustersetmapper reconciler: %v", err)
 		return err
 	}
 

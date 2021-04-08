@@ -52,7 +52,7 @@ func TestGetClustersetInRules(t *testing.T) {
 	policyr1 := createPolicyRule([]string{"*"}, []string{"*"}, []string{"*"}, []string{"*"})
 	policyr2 := createPolicyRule([]string{clusterv1alpha1.GroupName}, []string{"*"}, []string{"*"}, []string{"*"})
 	policyr3 := createPolicyRule([]string{clusterv1alpha1.GroupName}, []string{"*"}, []string{"*"}, []string{"res1", "res2"})
-	policyr4 := createPolicyRule([]string{clusterv1alpha1.GroupName}, []string{"create"}, []string{"managedclustersets/bind"}, []string{"res1", "res2"})
+	policyr4 := createPolicyRule([]string{clusterv1alpha1.GroupName}, []string{"update"}, []string{"managedclustersets"}, []string{"res1", "res2"})
 
 	type args struct {
 		rules []rbacv1.PolicyRule
@@ -70,9 +70,9 @@ func TestGetClustersetInRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := GetClustersetInRules(tt.args.rules)
+			res := GetClustersetAdminInRules(tt.args.rules)
 			if !res.Equal(tt.want) {
-				t.Errorf("Mergesubjects() = %v, want %v", res, tt.want)
+				t.Errorf("GetClustersetAdminInRules = %v, want %v", res, tt.want)
 			}
 		})
 	}
