@@ -69,10 +69,13 @@ func MappingFor(mapper meta.RESTMapper, resourceOrKindArg string) (*meta.RESTMap
 	fullySpecifiedGVR, groupResource := schema.ParseResourceArg(resourceOrKindArg)
 	gvk := schema.GroupVersionKind{}
 	if fullySpecifiedGVR != nil {
+		klog.Errorf("##g:%s,v:%s,R:%s", fullySpecifiedGVR.Group, fullySpecifiedGVR.Version, fullySpecifiedGVR.Resource)
 		gvk, _ = mapper.KindFor(*fullySpecifiedGVR)
+		klog.Errorf("##g:%s,v:%s,k:%s", gvk.Group, gvk.Version, gvk.Kind)
 	}
 	if gvk.Empty() {
 		gvk, _ = mapper.KindFor(groupResource.WithVersion(""))
+		klog.Errorf("##g:%s,v:%s,k:%s", gvk.Group, gvk.Version, gvk.Kind)
 	}
 	if !gvk.Empty() {
 		return mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
@@ -82,6 +85,8 @@ func MappingFor(mapper meta.RESTMapper, resourceOrKindArg string) (*meta.RESTMap
 	if fullySpecifiedGVK == nil {
 		gvk = groupKind.WithVersion("")
 		fullySpecifiedGVK = &gvk
+		klog.Errorf("##g:%s,v:%s,R:%s", fullySpecifiedGVR.Group, fullySpecifiedGVR.Version, fullySpecifiedGVR.Resource)
+		klog.Errorf("##g:%s,v:%s,k:%s", gvk.Group, gvk.Version, gvk.Kind)
 	}
 
 	if !fullySpecifiedGVK.Empty() {

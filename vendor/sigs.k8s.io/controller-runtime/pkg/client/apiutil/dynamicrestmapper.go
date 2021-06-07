@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/klog"
 )
 
 // dynamicRESTMapper is a RESTMapper that dynamically discovers resource
@@ -154,7 +155,6 @@ func (drm *dynamicRESTMapper) checkAndReload(needsReloadErr error, checkNeedsRel
 
 		return checkNeedsReload()
 	}()
-
 	// NB(directxman12): `Is` and `As` have a confusing relationship --
 	// `Is` is like `== or does this implement .Is`, whereas `As` says
 	// `can I type-assert into`
@@ -170,6 +170,7 @@ func (drm *dynamicRESTMapper) checkAndReload(needsReloadErr error, checkNeedsRel
 	// ... and double-check that we didn't reload in the meantime
 	err = checkNeedsReload()
 	needsReload = errors.As(err, &needsReloadErr)
+
 	if !needsReload {
 		return err
 	}
@@ -183,9 +184,10 @@ func (drm *dynamicRESTMapper) checkAndReload(needsReloadErr error, checkNeedsRel
 
 	// ...reload...
 	if err := drm.setStaticMapper(); err != nil {
+		klog.Errorf("#####err:%v", err)
 		return err
 	}
-
+	klog.Errorf("#####err:%v", err)
 	// ...and return the results of the closure regardless
 	return checkNeedsReload()
 }
@@ -199,9 +201,14 @@ func (drm *dynamicRESTMapper) KindFor(resource schema.GroupVersionResource) (sch
 	var gvk schema.GroupVersionKind
 	err := drm.checkAndReload(&meta.NoResourceMatchError{}, func() error {
 		var err error
+		klog.Errorf("#####1resource:%v", resource)
+
 		gvk, err = drm.staticMapper.KindFor(resource)
+		klog.Errorf("#####err:%v", err)
+		klog.Errorf("#####:%v", gvk)
 		return err
 	})
+	klog.Errorf("#####3")
 	return gvk, err
 }
 
