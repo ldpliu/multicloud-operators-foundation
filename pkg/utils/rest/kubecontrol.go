@@ -72,13 +72,17 @@ func NewKubeControl(mapper meta.RESTMapper, config *rest.Config) *KubeControl {
 func MappingFor(mapper meta.RESTMapper, resourceOrKindArg string) (*meta.RESTMapping, error) {
 	fullySpecifiedGVR, groupResource := schema.ParseResourceArg(resourceOrKindArg)
 	gvk := schema.GroupVersionKind{}
+	klog.Errorf("###gr g:%v,r:%v", groupResource.Group, groupResource.Resource)
+
 	if fullySpecifiedGVR != nil {
+		klog.Errorf("####fullyspecifyedGVP G:%v,v:%v,r:%v", fullySpecifiedGVR.Group, fullySpecifiedGVR.Version, fullySpecifiedGVR.Resource)
 		gvk, _ = mapper.KindFor(*fullySpecifiedGVR)
 	}
 	if gvk.Empty() {
 		gvk, _ = mapper.KindFor(groupResource.WithVersion(""))
 	}
 	if !gvk.Empty() {
+		klog.Errorf("###gvk not empty")
 		return mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	}
 
@@ -87,7 +91,7 @@ func MappingFor(mapper meta.RESTMapper, resourceOrKindArg string) (*meta.RESTMap
 		gvk = groupKind.WithVersion("")
 		fullySpecifiedGVK = &gvk
 	}
-
+	klog.Errorf("###gvk empty")
 	if !fullySpecifiedGVK.Empty() {
 		if mapping, err := mapper.RESTMapping(fullySpecifiedGVK.GroupKind(), fullySpecifiedGVK.Version); err == nil {
 			return mapping, nil

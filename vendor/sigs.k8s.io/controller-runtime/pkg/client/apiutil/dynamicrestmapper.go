@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/klog"
 )
 
 // dynamicRESTMapper is a RESTMapper that dynamically discovers resource
@@ -200,6 +201,8 @@ func (drm *dynamicRESTMapper) KindFor(resource schema.GroupVersionResource) (sch
 	err := drm.checkAndReload(&meta.NoResourceMatchError{}, func() error {
 		var err error
 		gvk, err = drm.staticMapper.KindFor(resource)
+		klog.Errorf("###gvk:%v", gvk)
+		klog.Errorf("###err:%v", err)
 		return err
 	})
 	return gvk, err
